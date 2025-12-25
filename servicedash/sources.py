@@ -339,6 +339,135 @@ async def fetch_doomsday_clock(
     )
 
 
+def _inverse_cdf_datetime(xs: list[datetime], cdf: list[float], p: float) -> datetime | None:
+    if not xs or not cdf or len(xs) != len(cdf):
+        return None
+    p = float(p)
+    if p <= cdf[0]:
+        return xs[0]
+    for i, v in enumerate(cdf):
+        if v >= p:
+            if i == 0:
+                return xs[0]
+            v0 = float(cdf[i - 1])
+            v1 = float(v)
+            if v1 <= v0:
+                return xs[i]
+            frac = (p - v0) / (v1 - v0)
+            frac = max(0.0, min(1.0, frac))
+            dt0 = xs[i - 1]
+            dt1 = xs[i]
+            delta_s = (dt1 - dt0).total_seconds() * frac
+            return dt0 + timedelta(seconds=delta_s)
+    return None
+
+
+async def fetch_metaculus_date(
+    client: httpx.AsyncClient, question_id: int, aggregation: str, quantile: float
+) -> NormalizedStatus:
+    if question_id <= 0:
+        return NormalizedStatus(status=Status.UNKNOWN, message="Metaculus: missing question_id")
+
+    started = time.perf_counter()
+    data = await _get_json(client, f"https://www.metaculus.com/api2/questions/{question_id}/")
+    latency_ms = int((time.perf_counter() - started) * 1000)
+
+    q = data.get("question") if isinstance(data, dict) else None
+    if not isinstance(q, dict):
+        return NormalizedStatus(status=Status.UNKNOWN, message="Metaculus: unexpected response", latency_ms=latency_ms)
+
+    scaling = q.get("scaling") or {}
+    cr = scaling.get("continuous_range")
+    aggs = q.get("aggregations") or {}
+    agg = aggs.get(aggregation) if isinstance(aggs, dict) else None
+    latest = agg.get("latest") if isinstance(agg, dict) else None
+    cdf = latest.get("forecast_values") if isinstance(latest, dict) else None
+    n = latest.get("forecaster_count") if isinstance(latest, dict) else None
+
+    if not isinstance(cr, list) or not isinstance(cdf, list) or len(cr) != len(cdf) or len(cr) < 2:
+        return NormalizedStatus(status=Status.UNKNOWN, message="Metaculus: missing aggregate CDF", latency_ms=latency_ms)
+
+    xs: list[datetime] = []
+    ys: list[float] = []
+    for t, v in zip(cr, cdf):
+        dt = parse_datetime(str(t))
+        if dt is None:
+            continue
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        xs.append(dt.astimezone(timezone.utc))
+        ys.append(fv)
+
+    if len(xs) < 2:
+        return NormalizedStatus(status=Status.UNKNOWN, message="Metaculus: parse error", latency_ms=latency_ms)
+
+    dt = _inverse_cdf_datetime(xs, ys, quantile)
+    if dt is None:
+        return NormalizedStatus(status=Status.UNKNOWN, message="Metaculus: quantile not found", latency_ms=latency_ms)
+
+    n_txt = f" n={int(n)}" if isinstance(n, int) else ""
+    msg = f"Metaculus Q{question_id} q={quantile:.2f}{n_txt} ETA {dt.date().isoformat()}"
+    return NormalizedStatus(status=Status.OPERATIONAL, message=msg, latency_ms=latency_ms, value_num=dt.timestamp())
+
+
+def _parse_yearish(text: str) -> float | None:
+    t = text.strip()
+    if not t:
+        return None
+    if re.fullmatch(r"(19|20)\d{2}", t):
+        return float(t)
+    m = re.fullmatch(r"((19|20)\d{2})\s*[-–—]\s*((19|20)\d{2})", t)
+    if m:
+        y0 = float(m.group(1))
+        y1 = float(m.group(3))
+        return (y0 + y1) / 2.0
+    m = re.fullmatch(r"((19|20)\d{2})s", t)
+    if m:
+        y = float(m.group(1))
+        return y + 5.0
+    return None
+
+
+async def fetch_manifold_year_market(client: httpx.AsyncClient, market_id: str) -> NormalizedStatus:
+    market_id = market_id.strip()
+    if not market_id:
+        return NormalizedStatus(status=Status.UNKNOWN, message="Manifold: missing market_id")
+
+    started = time.perf_counter()
+    data = await _get_json(client, f"https://api.manifold.markets/v0/market/{market_id}")
+    latency_ms = int((time.perf_counter() - started) * 1000)
+
+    answers = data.get("answers") if isinstance(data, dict) else None
+    question = str(data.get("question") or "").strip() if isinstance(data, dict) else ""
+    if not isinstance(answers, list) or not answers:
+        return NormalizedStatus(status=Status.UNKNOWN, message="Manifold: missing answers", latency_ms=latency_ms)
+
+    pairs: list[tuple[float, float]] = []
+    for a in answers:
+        if not isinstance(a, dict):
+            continue
+        y = _parse_yearish(str(a.get("text") or ""))
+        p = a.get("probability")
+        if y is None or not isinstance(p, (int, float)):
+            continue
+        pairs.append((y, float(p)))
+
+    total_p = sum(p for _, p in pairs)
+    if total_p <= 0:
+        return NormalizedStatus(status=Status.UNKNOWN, message="Manifold: no parsable year probs", latency_ms=latency_ms)
+
+    exp_year = sum(y * p for y, p in pairs) / total_p
+    year_int = int(exp_year)
+    frac = max(0.0, min(1.0, exp_year - year_int))
+    dt = datetime(year_int, 1, 1, tzinfo=timezone.utc) + timedelta(days=frac * 365.25)
+
+    short_q = (question[:39] + "…") if len(question) > 40 else question
+    msg = f"Manifold {market_id} E[year]={exp_year:.1f} ETA {dt.date().isoformat()} ({short_q or 'Manifold'})"
+    return NormalizedStatus(status=Status.OPERATIONAL, message=msg, latency_ms=latency_ms, value_num=dt.timestamp())
+
+
 async def fetch_gcp_incidents(
     client: httpx.AsyncClient, incidents_url: str, product_ids: list[str]
 ) -> NormalizedStatus:
@@ -446,4 +575,17 @@ async def fetch_service(client: httpx.AsyncClient, service: Service) -> Normaliz
             current_url=str(cfg.get("current_url", "")),
             previous_url=prev,
         )
+    if t == "metaculus_date":
+        try:
+            qid = int(cfg.get("question_id") or 0)
+        except (TypeError, ValueError):
+            qid = 0
+        agg = str(cfg.get("aggregation") or "recency_weighted")
+        try:
+            quantile = float(cfg.get("quantile") or 0.5)
+        except (TypeError, ValueError):
+            quantile = 0.5
+        return await fetch_metaculus_date(client, question_id=qid, aggregation=agg, quantile=quantile)
+    if t == "manifold_year_market":
+        return await fetch_manifold_year_market(client, market_id=str(cfg.get("market_id", "")))
     return NormalizedStatus(status=Status.UNKNOWN, message=f"Unknown service type: {t}")

@@ -3,7 +3,8 @@
 ## Goal (incl. success criteria)
 - Build a local terminal dashboard ("ServiceDash") with an amber/green retro terminal vibe (80 columns wide; can be tall, ~80 lines) that shows current status + last 24h history for:
   - OpenAI (highlight Codex), Gemini, AWS, Google App Engine, HelpScout, Slack, Anthropic/Claude, Shopify, Vercel.
-  - Economic metrics (BTC price, CAD→USD FX, and a few market/commodity quotes).
+  - Economic metrics (BTC price, FX, indices, commodities, key equities).
+  - Hypothetical “countdown clocks” for AGI and ASI/Singularity (based on public forecasting sources).
 - Success criteria:
   - `servicedash` runs locally and renders a single-screen dashboard in terminal.
   - Polls public status sources over HTTPS and persists results locally.
@@ -31,6 +32,8 @@
   - Cloudflare/GitHub/Netlify: Statuspage-compatible `api/v2/summary.json`.
 - Doomsday Clock:
   - Scrape Bulletin “Doomsday Clock Statement” pages for seconds-to-midnight and compare vs previous statement.
+- AGI/ASI clocks:
+  - Use Metaculus (AGI date question) and a public Manifold market (ASI year question) as *hypothetical* sources.
 
 ## State: Done / Now / Next
 - Done:
@@ -46,14 +49,16 @@
   - Added internet-critical status sources (Cloudflare, GitHub, Netlify).
   - Added market metrics (BTC, FX, indices, commodities, mega-cap stocks) with numeric history storage and 24h deltas.
   - Added Doomsday Clock line at the bottom with direction/velocity vs the previous statement.
+  - Added AGI and ASI/Singularity “countdown clocks” pinned at the top (Metaculus + Manifold sources).
 - Now:
-  - Tighten layout/legibility for tall terminals (optional polish).
+  - Tighten layout/legibility for strict 80x25 (optional polish).
 - Next:
   - Tighten UI fit/legibility for strict 80x25 (optional polish).
   - Add export (CSV/JSON) if desired.
 
 ## Open questions (mark as UNCONFIRMED if needed)
 - UNCONFIRMED: Any other specific economic metrics you want (rates/indices/yields) beyond the defaults?
+- UNCONFIRMED: Prefer the AGI/ASI clocks to come from Metaculus only, or is Manifold acceptable as a source for one of them?
 
 ## Working set (files/ids/commands)
 - Files: `servicedash/`, `servicedash.json`, `requirements.txt`, `README.md`, `CONTINUITY.md`

@@ -152,6 +152,15 @@ def _metric_range(rows: list[PollRow]) -> tuple[float | None, float | None]:
 
 
 def _format_value(view: "ServiceView", value: float) -> str:
+    if view.type in {"metaculus_date", "manifold_year_market"}:
+        target_ts = float(value)
+        now_ts = utc_now_ts()
+        delta_s = target_ts - now_ts
+        days = int(delta_s // 86400)
+        if days >= 0:
+            return f"T-{days}d"
+        return f"T+{abs(days)}d"
+
     fmt = view.cfg.get("format")
     if not isinstance(fmt, dict):
         fmt = {}
@@ -239,18 +248,26 @@ def _render_table(views: list[ServiceView]) -> Table:
 
     for v in views:
         latest = v.latest
-        is_metric = v.type in {"coingecko_price", "fx_rate", "stooq_quote", "doomsday_clock"}
+        is_metric = v.type in {"coingecko_price", "fx_rate", "stooq_quote", "doomsday_clock", "metaculus_date", "manifold_year_market"}
 
         if is_metric:
             first, last, pct = _metric_change(v.history)
             lo, hi = _metric_range(v.history)
             delta_txt = "  —"
-            if pct is not None:
+            is_date_clock = v.type in {"metaculus_date", "manifold_year_market"}
+            if is_date_clock and first is not None and last is not None:
+                delta_days = (last - first) / 86400.0
+                delta_txt = f"{delta_days:+6.1f}d"
+            elif pct is not None:
                 delta_txt = f"{pct:+6.2%}"
             elif first is not None and last is not None:
                 delta_txt = f"{(last - first):+7.2f}"
 
-            trend_style = GREEN if pct is not None and pct > 0 else RED if pct is not None and pct < 0 else AMBER
+            if is_date_clock and first is not None and last is not None:
+                delta_days = (last - first) / 86400.0
+                trend_style = GREEN if delta_days > 0 else RED if delta_days < 0 else AMBER
+            else:
+                trend_style = GREEN if pct is not None and pct > 0 else RED if pct is not None and pct < 0 else AMBER
             if last is None:
                 now_cell = Text("…", style=DIM_AMBER)
                 gauge = Text(" " * 12, style=DIM_AMBER)
@@ -258,11 +275,14 @@ def _render_table(views: list[ServiceView]) -> Table:
             else:
                 now_txt = _format_value(v, float(last))
                 now_cell = Text(now_txt, style=trend_style)
-                gauge = _range_bar(current=float(last), lo=lo, hi=hi, width=12, style=trend_style)
+                if is_date_clock:
+                    gauge = Text(" " * 12, style=DIM_AMBER)
+                else:
+                    gauge = _range_bar(current=float(last), lo=lo, hi=hi, width=12, style=trend_style)
                 trend = _value_spark(_bucket_values(v.history, hours=24, buckets=24), style=trend_style)
 
             note_raw = latest.message if latest else "No data yet"
-            if v.type != "doomsday_clock" and lo is not None and hi is not None:
+            if v.type not in {"doomsday_clock", "metaculus_date", "manifold_year_market"} and lo is not None and hi is not None:
                 note_raw = f"{note_raw}  lo {lo:.2f} hi {hi:.2f}".strip()
             note = _truncate(note_raw, 38)
             table.add_row(Text(_truncate(v.name, 18), style=AMBER), now_cell, Text(delta_txt, style=trend_style), gauge, trend, Text(note, style=DIM_AMBER))
@@ -287,6 +307,7 @@ def _render_screen(
     *,
     views: list[ServiceView],
     all_views: list[ServiceView],
+    pinned: list[ServiceView],
     last_poll_ts: int | None,
     page_index: int,
     page_count: int,
@@ -309,6 +330,39 @@ def _render_screen(
         ("  ", DIM_AMBER),
         ("r refresh  n/p page  q quit", DIM_AMBER),
     )
+
+    pinned_lines: list[Text] = []
+    if pinned:
+        pinned_sorted = sorted(
+            pinned,
+            key=lambda v: (int(v.cfg.get("pin_order") or 0), v.name.lower()),
+        )
+        now_ts = utc_now_ts()
+        for v in pinned_sorted[:4]:
+            if not v.latest or v.latest.value_num is None:
+                pinned_lines.append(Text(f"{v.name}: …", style=AMBER))
+                continue
+
+            eta_ts = float(v.latest.value_num)
+            eta_dt = datetime.fromtimestamp(eta_ts, tz=timezone.utc).astimezone()
+            remaining_s = eta_ts - now_ts
+            remaining_days = int(remaining_s // 86400)
+            remaining_hours = int((remaining_s % 86400) // 3600) if remaining_s >= 0 else 0
+            countdown = f"T-{remaining_days}d" if remaining_days >= 0 else f"T+{abs(remaining_days)}d"
+
+            shift_days: float | None = None
+            vals = [float(r.value_num) for r in v.history if r.value_num is not None]
+            if len(vals) >= 2:
+                shift_days = (vals[-1] - vals[0]) / 86400.0
+
+            shift_txt = ""
+            shift_style = AMBER
+            if shift_days is not None:
+                shift_style = GREEN if shift_days > 0 else RED if shift_days < 0 else AMBER
+                shift_txt = f"  ΔETA {shift_days:+.1f}d/24h"
+
+            line = f"{v.name}: {countdown} {remaining_hours:02d}h  ETA {eta_dt.date().isoformat()}{shift_txt}"
+            pinned_lines.append(Text(_truncate(line, 78), style=shift_style))
 
     table = _render_table(views)
 
@@ -341,7 +395,7 @@ def _render_screen(
         footer_parts.append(dooms_line)
     footer = Group(*footer_parts)
 
-    content = Group(header, table, footer)
+    content = Group(header, *pinned_lines, table, footer)
     return Panel(content, border_style=AMBER, box=box.DOUBLE, padding=(0, 1))
 
 
@@ -351,14 +405,15 @@ def _terminal_ok() -> tuple[bool, str]:
         return False, f"Terminal is {size.columns}x{size.lines}; need at least 80x25 (recommended ~80x80)."
     return True, f"Terminal {size.columns}x{size.lines} (recommended ~80x80)"
 
-def _page_size(services_count: int) -> int:
+def _page_size(services_count: int, *, pinned_count: int) -> int:
     size = shutil.get_terminal_size(fallback=(80, 25))
     # Rough budget for 80x25:
     # - Outer panel border: 2
     # - Header line: 1
     # - Footer title + up to 3 lines + doomsday: 5
+    # - Pinned lines: pinned_count
     # - Table header + rule: 2
-    overhead = 2 + 1 + 5 + 2
+    overhead = 2 + 1 + pinned_count + 5 + 2
     return max(1, min(services_count, max(1, size.lines - overhead)))
 
 
@@ -504,8 +559,11 @@ async def run_dashboard(*, config_path: Path, screen: bool, once: bool) -> None:
                             manual_page += 1 if ch == "n" else -1
 
                     all_views = build_views()
-                    page_size = _page_size(len(all_views))
-                    page_count = max(1, (len(all_views) + page_size - 1) // page_size)
+                    pinned = [v for v in all_views if bool(v.cfg.get("pin"))]
+                    table_views = [v for v in all_views if not bool(v.cfg.get("pin"))]
+
+                    page_size = _page_size(len(table_views), pinned_count=len(pinned))
+                    page_count = max(1, (len(table_views) + page_size - 1) // page_size)
                     page_index = 0
                     page_mode = ""
                     if page_count > 1:
@@ -518,12 +576,13 @@ async def run_dashboard(*, config_path: Path, screen: bool, once: bool) -> None:
                             page_mode = "(manual)"
                     current_page = page_index
                     start = page_index * page_size
-                    views = all_views[start : start + page_size]
+                    views = table_views[start : start + page_size]
 
                     frame = Align.center(
                         _render_screen(
                             views=views,
                             all_views=all_views,
+                            pinned=pinned,
                             last_poll_ts=last_poll_ts,
                             page_index=page_index,
                             page_count=page_count,

@@ -5,6 +5,22 @@
   "database_path": "data/servicedash.sqlite3",
   "services": [
     {
+      "id": "agi_clock",
+      "name": "AGI Countdown",
+      "type": "metaculus_date",
+      "question_id": 5121,
+      "aggregation": "recency_weighted",
+      "quantile": 0.5,
+      "pin": true
+    },
+    {
+      "id": "asi_clock",
+      "name": "ASI / Singularity Countdown",
+      "type": "manifold_year_market",
+      "market_id": "zOeYvjJXX42LgySMybg3",
+      "pin": true
+    },
+    {
       "id": "openai",
       "name": "OpenAI",
       "type": "statuspage",

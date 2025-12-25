@@ -31,6 +31,7 @@ python -m servicedash poll --log
   - Internet-critical: Cloudflare, GitHub, Netlify.
   - Markets: BTC/USD, CAD→USD, EUR/USD, USD/JPY, SPX/NDX, gold, silver, copper, WTI, nat gas, plus a few large-cap stocks (TSLA/GOOGL/AAPL/MSFT/NVDA/AMZN/META).
   - Doomsday Clock (seconds to midnight + direction/velocity vs previous statement).
+  - Hypothetical AGI/ASI countdown clocks (Metaculus + Manifold community forecasts).
 
 ## Development workflow
 - Run the dashboard: `python -m servicedash run`
