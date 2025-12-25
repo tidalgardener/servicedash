@@ -20,6 +20,7 @@
 - Python 3 (tested with the system Python 3.9 on macOS).
 - UI: `rich` (alt-screen live dashboard; amber/green CRT vibe; targets 80x25).
 - Polling: `httpx` over HTTPS against public status endpoints.
+- Refresh cadence: polls on startup, then every `poll_interval_seconds` (default `300`); manual refresh via `r`.
 - Persistence: local SQLite at `data/servicedash.sqlite3` (in-repo, gitignored).
 - “Gemini” source: Google Cloud status product “Vertex Gemini API” (product id `Z0FZJAMvEB4j3NbCJs6B`).
 - “Claude” source: split into component rows from `status.anthropic.com` (claude.ai / Claude API / Claude Code).
@@ -48,8 +49,10 @@
   - Added Shopify + Vercel status sources.
   - Added internet-critical status sources (Cloudflare, GitHub, Netlify).
   - Added market metrics (BTC, FX, indices, commodities, mega-cap stocks) with numeric history storage and 24h deltas.
+  - Added Bitcoin network health (blocks age + mempool/fee congestion) via `mempool.space` API.
   - Added Doomsday Clock line at the bottom with direction/velocity vs the previous statement.
   - Added AGI and ASI/Singularity “countdown clocks” pinned at the top (Metaculus + Manifold sources).
+  - Smoke-checked: `python -m py_compile servicedash/*.py` and `python -m servicedash run --once --no-screen`.
 - Now:
   - Tighten layout/legibility for strict 80x25 (optional polish).
 - Next:
@@ -59,6 +62,8 @@
 ## Open questions (mark as UNCONFIRMED if needed)
 - UNCONFIRMED: Any other specific economic metrics you want (rates/indices/yields) beyond the defaults?
 - UNCONFIRMED: Prefer the AGI/ASI clocks to come from Metaculus only, or is Manifold acceptable as a source for one of them?
+- UNCONFIRMED: What polling interval do you want (default 5 min)?
+- UNCONFIRMED: OK using `mempool.space` as the Bitcoin network health source?
 
 ## Working set (files/ids/commands)
 - Files: `servicedash/`, `servicedash.json`, `requirements.txt`, `README.md`, `CONTINUITY.md`

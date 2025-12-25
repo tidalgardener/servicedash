@@ -124,6 +124,16 @@
       "component_match": ["Claude Code"]
     },
     {
+      "id": "bitcoin_network",
+      "name": "Bitcoin Network",
+      "type": "bitcoin_network_health",
+      "api_base": "https://mempool.space/api",
+      "stale_minutes_degraded": 60,
+      "stale_minutes_outage": 120,
+      "congestion_fee_sat_vb": 50,
+      "congestion_mempool_mb": 50
+    },
+    {
       "id": "btc_usd",
       "name": "BTC/USD",
       "type": "coingecko_price",

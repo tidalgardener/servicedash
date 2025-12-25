@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import csv
 import json
 import re
@@ -237,6 +238,90 @@ async def fetch_stooq_quote(client: httpx.AsyncClient, symbol: str) -> Normalize
     if date and time_s and date.upper() != "N/D" and time_s.upper() != "N/D":
         note = f"Stooq {date} {time_s}"
     return NormalizedStatus(status=Status.OPERATIONAL, message=note, latency_ms=latency_ms, value_num=value)
+
+
+async def fetch_bitcoin_network_health(client: httpx.AsyncClient, api_base: str, cfg: dict[str, Any]) -> NormalizedStatus:
+    api_base = api_base.strip().rstrip("/")
+    if not api_base:
+        api_base = "https://mempool.space/api"
+
+    def _int(v: Any) -> int | None:
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+
+    def _float(v: Any) -> float | None:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    stale_degraded_min = _int(cfg.get("stale_minutes_degraded")) or 60
+    stale_outage_min = _int(cfg.get("stale_minutes_outage")) or 120
+    cong_fee = _int(cfg.get("congestion_fee_sat_vb")) or 50
+    cong_mem_mb = _float(cfg.get("congestion_mempool_mb")) or 50.0
+
+    started = time.perf_counter()
+    try:
+        blocks, mempool, fees = await asyncio.gather(
+            _get_json(client, f"{api_base}/blocks"),
+            _get_json(client, f"{api_base}/mempool"),
+            _get_json(client, f"{api_base}/v1/fees/recommended"),
+        )
+    except Exception:
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        return NormalizedStatus(status=Status.UNKNOWN, message="Bitcoin: fetch error", latency_ms=latency_ms)
+
+    latency_ms = int((time.perf_counter() - started) * 1000)
+
+    if not isinstance(blocks, list) or not blocks or not isinstance(blocks[0], dict):
+        return NormalizedStatus(status=Status.UNKNOWN, message="Bitcoin: blocks parse error", latency_ms=latency_ms)
+
+    ts = _int(blocks[0].get("timestamp"))
+    if ts is None:
+        return NormalizedStatus(status=Status.UNKNOWN, message="Bitcoin: block time missing", latency_ms=latency_ms)
+
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    age_min = max(0, (now_ts - ts) // 60)
+
+    mem_mb: float | None = None
+    mem_count: int | None = None
+    if isinstance(mempool, dict):
+        mem_count = _int(mempool.get("count"))
+        vsize = _float(mempool.get("vsize"))
+        if vsize is not None:
+            mem_mb = vsize / 1_000_000.0
+
+    fastest_fee: int | None = None
+    if isinstance(fees, dict):
+        fastest_fee = _int(fees.get("fastestFee"))
+
+    status = Status.OPERATIONAL
+    if age_min >= stale_outage_min:
+        status = Status.OUTAGE
+    elif age_min >= stale_degraded_min:
+        status = Status.DEGRADED
+
+    if status != Status.OUTAGE:
+        congested = False
+        if fastest_fee is not None and fastest_fee >= cong_fee:
+            congested = True
+        if mem_mb is not None and mem_mb >= cong_mem_mb:
+            congested = True
+        if congested:
+            status = Status.DEGRADED
+
+    parts = [f"blk {age_min}m"]
+    if mem_mb is not None:
+        if mem_count is not None:
+            parts.append(f"mem {mem_mb:.1f}MB/{mem_count//1000}k")
+        else:
+            parts.append(f"mem {mem_mb:.1f}MB")
+    if fastest_fee is not None:
+        parts.append(f"fee {fastest_fee} sat/vB")
+    msg = " ".join(parts)
+    return NormalizedStatus(status=status, message=msg, latency_ms=latency_ms)
 
 
 def _parse_doomsday_seconds(html: str) -> int | None:
@@ -568,6 +653,12 @@ async def fetch_service(client: httpx.AsyncClient, service: Service) -> Normaliz
         )
     if t == "stooq_quote":
         return await fetch_stooq_quote(client, symbol=str(cfg.get("symbol", "")))
+    if t == "bitcoin_network_health":
+        return await fetch_bitcoin_network_health(
+            client,
+            api_base=str(cfg.get("api_base") or "https://mempool.space/api"),
+            cfg=cfg,
+        )
     if t == "doomsday_clock":
         prev = str(cfg.get("previous_url") or "").strip() or None
         return await fetch_doomsday_clock(

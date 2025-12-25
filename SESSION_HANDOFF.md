@@ -13,6 +13,7 @@
 - Added `python -m servicedash poll` for headless history polling.
  - Added economic metrics (CoinGecko + Frankfurter + Stooq) and extra status sources (Shopify, Vercel).
  - Added hypothetical forecast clocks pinned at the top (AGI via Metaculus, ASI via Manifold).
+ - Added Bitcoin network health row via `mempool.space` API.
 
 ## Decisions (what/why)
 - Python + `rich` for a full-screen-ish 80x25 retro terminal dashboard.
