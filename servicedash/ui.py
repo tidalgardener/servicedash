@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 import shutil
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import httpx
 from rich import box
@@ -90,6 +92,95 @@ def _trend_spark(values: list[int | None]) -> Text:
     return out
 
 
+def _bucket_values(rows: list[PollRow], *, hours: int = 24, buckets: int = 24) -> list[float | None]:
+    if buckets <= 0:
+        return []
+    now_ts = utc_now_ts()
+    start_ts = now_ts - hours * 3600
+    span = hours * 3600
+    bucket_size = max(1, span // buckets)
+
+    values: list[float | None] = [None] * buckets
+    for r in rows:
+        if r.ts < start_ts or r.value_num is None:
+            continue
+        idx = min(buckets - 1, max(0, (r.ts - start_ts) // bucket_size))
+        values[idx] = float(r.value_num)
+    return values
+
+
+def _value_spark(values: list[float | None], *, style: str) -> Text:
+    blocks = "▁▂▃▄▅▆▇█"
+    nums = [v for v in values if v is not None]
+    if not nums:
+        return Text("·" * len(values), style=DIM_AMBER)
+    lo = min(nums)
+    hi = max(nums)
+    out = Text()
+    if hi <= lo:
+        out.append(blocks[3] * len(values), style=style)
+        return out
+
+    for v in values:
+        if v is None:
+            out.append("·", style=DIM_AMBER)
+            continue
+        idx = int(round((float(v) - lo) / (hi - lo) * (len(blocks) - 1)))
+        idx = max(0, min(len(blocks) - 1, idx))
+        out.append(blocks[idx], style=style)
+    return out
+
+
+def _metric_change(rows: list[PollRow]) -> tuple[float | None, float | None, float | None]:
+    vals = [r.value_num for r in rows if r.value_num is not None]
+    if len(vals) < 2:
+        return None, None, None
+    first = float(vals[0])
+    last = float(vals[-1])
+    if first == 0:
+        pct = None
+    else:
+        pct = (last - first) / first
+    return first, last, pct
+
+
+def _metric_range(rows: list[PollRow]) -> tuple[float | None, float | None]:
+    vals = [float(r.value_num) for r in rows if r.value_num is not None]
+    if not vals:
+        return None, None
+    return min(vals), max(vals)
+
+
+def _format_value(view: "ServiceView", value: float) -> str:
+    fmt = view.cfg.get("format")
+    if not isinstance(fmt, dict):
+        fmt = {}
+
+    prefix = str(fmt.get("prefix") or "")
+    suffix = str(fmt.get("suffix") or "")
+    thousands = bool(fmt.get("thousands", False))
+
+    decimals_raw = fmt.get("decimals")
+    decimals: int | None
+    if isinstance(decimals_raw, int):
+        decimals = decimals_raw
+    elif isinstance(decimals_raw, str) and decimals_raw.strip().isdigit():
+        decimals = int(decimals_raw.strip())
+    else:
+        decimals = None
+
+    if decimals is None:
+        if view.type == "fx_rate":
+            decimals = 5
+        elif view.type == "coingecko_price":
+            decimals = 0 if abs(value) >= 1000 else 2
+        else:
+            decimals = 2
+
+    num = f"{value:,.{decimals}f}" if thousands else f"{value:.{decimals}f}"
+    return f"{prefix}{num}{suffix}"
+
+
 def _uptime(rows: list[PollRow]) -> float | None:
     if not rows:
         return None
@@ -107,10 +198,24 @@ def _uptime_bar(ratio: float | None, width: int = 12) -> Text:
     return Text(bar, style=style)
 
 
+def _range_bar(*, current: float | None, lo: float | None, hi: float | None, width: int = 12, style: str) -> Text:
+    if current is None or lo is None or hi is None:
+        return Text(" " * width, style=DIM_AMBER)
+    if hi <= lo:
+        filled = width // 2
+    else:
+        filled = int(round((current - lo) / (hi - lo) * width))
+    filled = max(0, min(width, filled))
+    bar = "█" * filled + "░" * (width - filled)
+    return Text(bar, style=style)
+
+
 @dataclass(frozen=True)
 class ServiceView:
     service_id: str
     name: str
+    type: str
+    cfg: dict[str, Any]
     latest: PollRow | None
     history: list[PollRow]
 
@@ -125,15 +230,44 @@ def _render_table(views: list[ServiceView]) -> Table:
         pad_edge=False,
         row_styles=["", "on rgb(18,10,0)"],
     )
-    table.add_column("Service", width=18, no_wrap=True)
-    table.add_column("Now", width=10, no_wrap=True)
-    table.add_column("24h", width=5, justify="right", no_wrap=True)
+    table.add_column("Item", width=18, no_wrap=True)
+    table.add_column("Now", width=12, justify="right", no_wrap=True)
+    table.add_column("24h", width=8, justify="right", no_wrap=True)
     table.add_column("Gauge", width=12, no_wrap=True)
     table.add_column("Trend", width=24, no_wrap=True)
     table.add_column("Note", ratio=1, no_wrap=True)
 
     for v in views:
         latest = v.latest
+        is_metric = v.type in {"coingecko_price", "fx_rate", "stooq_quote", "doomsday_clock"}
+
+        if is_metric:
+            first, last, pct = _metric_change(v.history)
+            lo, hi = _metric_range(v.history)
+            delta_txt = "  —"
+            if pct is not None:
+                delta_txt = f"{pct:+6.2%}"
+            elif first is not None and last is not None:
+                delta_txt = f"{(last - first):+7.2f}"
+
+            trend_style = GREEN if pct is not None and pct > 0 else RED if pct is not None and pct < 0 else AMBER
+            if last is None:
+                now_cell = Text("…", style=DIM_AMBER)
+                gauge = Text(" " * 12, style=DIM_AMBER)
+                trend = Text("·" * 24, style=DIM_AMBER)
+            else:
+                now_txt = _format_value(v, float(last))
+                now_cell = Text(now_txt, style=trend_style)
+                gauge = _range_bar(current=float(last), lo=lo, hi=hi, width=12, style=trend_style)
+                trend = _value_spark(_bucket_values(v.history, hours=24, buckets=24), style=trend_style)
+
+            note_raw = latest.message if latest else "No data yet"
+            if v.type != "doomsday_clock" and lo is not None and hi is not None:
+                note_raw = f"{note_raw}  lo {lo:.2f} hi {hi:.2f}".strip()
+            note = _truncate(note_raw, 38)
+            table.add_row(Text(_truncate(v.name, 18), style=AMBER), now_cell, Text(delta_txt, style=trend_style), gauge, trend, Text(note, style=DIM_AMBER))
+            continue
+
         now_chip = _status_chip(latest.status) if latest else Text("…", style=DIM_AMBER)
         uptime = _uptime(v.history)
         uptime_pct = f"{int(round(uptime * 100)):>3d}%" if uptime is not None else "  —"
@@ -143,7 +277,7 @@ def _render_table(views: list[ServiceView]) -> Table:
             note_raw = f"{latest.latency_ms}ms {latest.message}"
         else:
             note_raw = latest.message if latest else "No data yet"
-        note = _truncate(note_raw, 26)
+        note = _truncate(note_raw, 38)
         table.add_row(Text(_truncate(v.name, 18), style=AMBER), now_chip, uptime_pct, gauge, trend, Text(note, style=DIM_AMBER))
 
     return table
@@ -192,7 +326,20 @@ def _render_screen(
     if not incidents_lines:
         incidents_lines.append(Text("- All tracked services look operational (per current sources).", style=GREEN))
 
-    footer = Group(Text("Incidents / Notes (non-OK):", style=f"bold {AMBER}"), *incidents_lines[:3])
+    dooms_view = next((v for v in all_views if v.type == "doomsday_clock"), None)
+    dooms_line: Text | None = None
+    if dooms_view and dooms_view.latest and dooms_view.latest.value_num is not None:
+        msg = dooms_view.latest.message or ""
+        delta_m = re.search(r"Δ\\s*([+-]?\\d+)s\\b", msg)
+        delta = int(delta_m.group(1)) if delta_m else 0
+        style = AMBER if delta == 0 else (GREEN if delta > 0 else RED)
+        dooms_text = f"Doomsday Clock: {_truncate(msg, 74)}"
+        dooms_line = Text(dooms_text, style=style)
+
+    footer_parts: list[Text] = [Text("Incidents / Notes (non-OK):", style=f"bold {AMBER}"), *incidents_lines[:3]]
+    if dooms_line is not None:
+        footer_parts.append(dooms_line)
+    footer = Group(*footer_parts)
 
     content = Group(header, table, footer)
     return Panel(content, border_style=AMBER, box=box.DOUBLE, padding=(0, 1))
@@ -201,17 +348,17 @@ def _render_screen(
 def _terminal_ok() -> tuple[bool, str]:
     size = shutil.get_terminal_size(fallback=(80, 25))
     if size.columns < 80 or size.lines < 25:
-        return False, f"Terminal is {size.columns}x{size.lines}; recommended is at least 80x25."
-    return True, f"Terminal {size.columns}x{size.lines}"
+        return False, f"Terminal is {size.columns}x{size.lines}; need at least 80x25 (recommended ~80x80)."
+    return True, f"Terminal {size.columns}x{size.lines} (recommended ~80x80)"
 
 def _page_size(services_count: int) -> int:
     size = shutil.get_terminal_size(fallback=(80, 25))
     # Rough budget for 80x25:
     # - Outer panel border: 2
     # - Header line: 1
-    # - Footer title + up to 3 lines: 4
+    # - Footer title + up to 3 lines + doomsday: 5
     # - Table header + rule: 2
-    overhead = 2 + 1 + 4 + 2
+    overhead = 2 + 1 + 5 + 2
     return max(1, min(services_count, max(1, size.lines - overhead)))
 
 
@@ -258,7 +405,16 @@ async def run_dashboard(*, config_path: Path, screen: bool, once: bool) -> None:
             for svc in services:
                 latest = latest_for_service(conn, svc.id)
                 history = series_for_service(conn, svc.id, since_ts=since_ts)
-                views.append(ServiceView(service_id=svc.id, name=svc.name, latest=latest, history=history))
+                views.append(
+                    ServiceView(
+                        service_id=svc.id,
+                        name=svc.name,
+                        type=svc.type,
+                        cfg=svc.cfg,
+                        latest=latest,
+                        history=history,
+                    )
+                )
             return views
 
         async def poll_loop() -> None:

@@ -77,4 +77,4 @@ class NormalizedStatus:
     status: Status
     message: str
     latency_ms: int | None = None
-
+    value_num: float | None = None

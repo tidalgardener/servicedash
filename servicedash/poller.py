@@ -54,6 +54,7 @@ def record_outcomes(conn, outcomes: list[PollOutcome]) -> None:
                 severity=o.status.status.severity,
                 message=o.status.message,
                 latency_ms=o.status.latency_ms,
+                value_num=o.status.value_num,
             ),
         )
 

@@ -1,8 +1,9 @@
 # CONTINUITY
 
 ## Goal (incl. success criteria)
-- Build a local terminal dashboard ("ServiceDash") with an amber/green retro terminal vibe (80x25) that shows current status + last 24h history for:
-  - OpenAI (highlight Codex if available), Gemini, AWS, Google App Engine, HelpScout, Slack, Claude/Anthropic.
+- Build a local terminal dashboard ("ServiceDash") with an amber/green retro terminal vibe (80 columns wide; can be tall, ~80 lines) that shows current status + last 24h history for:
+  - OpenAI (highlight Codex), Gemini, AWS, Google App Engine, HelpScout, Slack, Anthropic/Claude, Shopify, Vercel.
+  - Economic metrics (BTC price, CAD→USD FX, and a few market/commodity quotes).
 - Success criteria:
   - `servicedash` runs locally and renders a single-screen dashboard in terminal.
   - Polls public status sources over HTTPS and persists results locally.
@@ -22,6 +23,14 @@
 - “Gemini” source: Google Cloud status product “Vertex Gemini API” (product id `Z0FZJAMvEB4j3NbCJs6B`).
 - “Claude” source: split into component rows from `status.anthropic.com` (claude.ai / Claude API / Claude Code).
 - Optional headless poller mode: `python -m servicedash poll` for background-ish history collection.
+- Economic metrics sources:
+  - BTC/USD: CoinGecko simple price API.
+  - CAD→USD: Frankfurter FX API.
+  - Market/commodities/stocks: Stooq CSV quotes.
+- Internet health sources:
+  - Cloudflare/GitHub/Netlify: Statuspage-compatible `api/v2/summary.json`.
+- Doomsday Clock:
+  - Scrape Bulletin “Doomsday Clock Statement” pages for seconds-to-midnight and compare vs previous statement.
 
 ## State: Done / Now / Next
 - Done:
@@ -33,13 +42,18 @@
   - Split Claude into separate component rows (claude.ai / Claude API / Claude Code).
   - Added auto-paging when service count exceeds screen height.
   - Added keybinds in the UI (r refresh, n/p page, q quit).
+  - Added Shopify + Vercel status sources.
+  - Added internet-critical status sources (Cloudflare, GitHub, Netlify).
+  - Added market metrics (BTC, FX, indices, commodities, mega-cap stocks) with numeric history storage and 24h deltas.
+  - Added Doomsday Clock line at the bottom with direction/velocity vs the previous statement.
 - Now:
-  - Tighten UI fit/legibility for strict 80x25 (optional polish).
+  - Tighten layout/legibility for tall terminals (optional polish).
 - Next:
-  - Add small quality-of-life features (manual refresh keybind, export) if desired.
+  - Tighten UI fit/legibility for strict 80x25 (optional polish).
+  - Add export (CSV/JSON) if desired.
 
 ## Open questions (mark as UNCONFIRMED if needed)
-- UNCONFIRMED: Add a separate “Claude Console” row (`platform.claude.com`)?
+- UNCONFIRMED: Any other specific economic metrics you want (rates/indices/yields) beyond the defaults?
 
 ## Working set (files/ids/commands)
 - Files: `servicedash/`, `servicedash.json`, `requirements.txt`, `README.md`, `CONTINUITY.md`

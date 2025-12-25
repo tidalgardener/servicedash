@@ -26,6 +26,11 @@ python -m servicedash poll --log
 ## Configuration
 - `servicedash.json` controls what services are tracked, polling interval, and the local SQLite DB path.
 - Default DB location: `data/servicedash.sqlite3` (created automatically).
+- Defaults include:
+  - Status sources: OpenAI/Codex, Gemini, AWS, GAE, HelpScout, Slack, Anthropic/Claude, Shopify, Vercel.
+  - Internet-critical: Cloudflare, GitHub, Netlify.
+  - Markets: BTC/USD, CAD→USD, EUR/USD, USD/JPY, SPX/NDX, gold, silver, copper, WTI, nat gas, plus a few large-cap stocks (TSLA/GOOGL/AAPL/MSFT/NVDA/AMZN/META).
+  - Doomsday Clock (seconds to midnight + direction/velocity vs previous statement).
 
 ## Development workflow
 - Run the dashboard: `python -m servicedash run`

@@ -14,6 +14,7 @@ class PollRow:
     severity: int
     message: str
     latency_ms: int | None
+    value_num: float | None
 
 
 SCHEMA = """
@@ -25,7 +26,8 @@ CREATE TABLE IF NOT EXISTS polls (
   status TEXT NOT NULL,
   severity INTEGER NOT NULL,
   message TEXT NOT NULL,
-  latency_ms INTEGER
+  latency_ms INTEGER,
+  value_num REAL
 );
 
 CREATE INDEX IF NOT EXISTS idx_polls_service_ts ON polls(service_id, ts);
@@ -43,16 +45,29 @@ def connect(db_path: Path) -> sqlite3.Connection:
 
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    # Backward compatible migrations for existing DBs.
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(polls)")}
+    if "value_num" not in cols:
+        conn.execute("ALTER TABLE polls ADD COLUMN value_num REAL")
     conn.commit()
 
 
 def insert_poll(conn: sqlite3.Connection, row: PollRow) -> None:
     conn.execute(
         """
-        INSERT INTO polls(ts, service_id, service_name, status, severity, message, latency_ms)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO polls(ts, service_id, service_name, status, severity, message, latency_ms, value_num)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (row.ts, row.service_id, row.service_name, row.status, row.severity, row.message, row.latency_ms),
+        (
+            row.ts,
+            row.service_id,
+            row.service_name,
+            row.status,
+            row.severity,
+            row.message,
+            row.latency_ms,
+            row.value_num,
+        ),
     )
     conn.commit()
 
@@ -66,7 +81,7 @@ def prune_before(conn: sqlite3.Connection, cutoff_ts: int) -> int:
 def latest_for_service(conn: sqlite3.Connection, service_id: str) -> PollRow | None:
     row = conn.execute(
         """
-        SELECT ts, service_id, service_name, status, severity, message, latency_ms
+        SELECT ts, service_id, service_name, status, severity, message, latency_ms, value_num
         FROM polls
         WHERE service_id = ?
         ORDER BY ts DESC
@@ -80,7 +95,7 @@ def latest_for_service(conn: sqlite3.Connection, service_id: str) -> PollRow | N
 def series_for_service(conn: sqlite3.Connection, service_id: str, since_ts: int) -> list[PollRow]:
     rows = conn.execute(
         """
-        SELECT ts, service_id, service_name, status, severity, message, latency_ms
+        SELECT ts, service_id, service_name, status, severity, message, latency_ms, value_num
         FROM polls
         WHERE service_id = ? AND ts >= ?
         ORDER BY ts ASC
@@ -88,4 +103,3 @@ def series_for_service(conn: sqlite3.Connection, service_id: str, since_ts: int)
         (service_id, since_ts),
     ).fetchall()
     return [PollRow(**dict(r)) for r in rows]
-

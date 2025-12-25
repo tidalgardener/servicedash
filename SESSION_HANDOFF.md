@@ -3,14 +3,15 @@
 ## Ledger Snapshot (Goal / Now / Next / Open Questions)
 - Goal: Build a local terminal status dashboard with 24h history.
 - Now: Core app is implemented; optional polish.
-- Next: Decide if “Claude” should be split (API vs Code) and iterate UI fit.
+- Next: Optional polish + export; optional launchd-on-login poller.
 - Open Questions:
-  - UNCONFIRMED: Add more Claude rows (Console, etc.)?
+  - UNCONFIRMED: Any other economic metrics you want beyond defaults?
 
 ## What changed (files/components)
 - Added the Python app under `servicedash/` (polling, storage, UI).
 - Added default config `servicedash.json` and dependencies in `requirements.txt`.
- - Added `python -m servicedash poll` for headless history polling.
+- Added `python -m servicedash poll` for headless history polling.
+ - Added economic metrics (CoinGecko + Frankfurter + Stooq) and extra status sources (Shopify, Vercel).
 
 ## Decisions (what/why)
 - Python + `rich` for a full-screen-ish 80x25 retro terminal dashboard.

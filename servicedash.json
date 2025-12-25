@@ -44,11 +44,41 @@
       "base_url": "https://status.helpscout.com"
     },
     {
+      "id": "shopify",
+      "name": "Shopify",
+      "type": "statuspage",
+      "base_url": "https://www.shopifystatus.com"
+    },
+    {
       "id": "slack",
       "name": "Slack",
       "type": "slack",
       "current_url": "https://slack-status.com/api/v2.0.0/current",
       "history_url": "https://slack-status.com/api/v2.0.0/history"
+    },
+    {
+      "id": "vercel",
+      "name": "Vercel",
+      "type": "statuspage",
+      "base_url": "https://www.vercel-status.com"
+    },
+    {
+      "id": "cloudflare",
+      "name": "Cloudflare",
+      "type": "statuspage",
+      "base_url": "https://www.cloudflarestatus.com"
+    },
+    {
+      "id": "github",
+      "name": "GitHub",
+      "type": "statuspage",
+      "base_url": "https://www.githubstatus.com"
+    },
+    {
+      "id": "netlify",
+      "name": "Netlify",
+      "type": "statuspage",
+      "base_url": "https://www.netlifystatus.com"
     },
     {
       "id": "anthropic",
@@ -76,6 +106,142 @@
       "type": "statuspage_component",
       "base_url": "https://status.anthropic.com",
       "component_match": ["Claude Code"]
+    },
+    {
+      "id": "btc_usd",
+      "name": "BTC/USD",
+      "type": "coingecko_price",
+      "asset_id": "bitcoin",
+      "vs_currency": "usd",
+      "format": { "prefix": "$", "decimals": 0, "thousands": true }
+    },
+    {
+      "id": "cad_usd",
+      "name": "CAD→USD",
+      "type": "fx_rate",
+      "base": "CAD",
+      "quote": "USD",
+      "format": { "decimals": 5 }
+    },
+    {
+      "id": "spx",
+      "name": "S&P 500 (^SPX)",
+      "type": "stooq_quote",
+      "symbol": "^spx",
+      "format": { "decimals": 2, "thousands": true }
+    },
+    {
+      "id": "ndx",
+      "name": "Nasdaq 100 (^NDX)",
+      "type": "stooq_quote",
+      "symbol": "^ndx",
+      "format": { "decimals": 2, "thousands": true }
+    },
+    {
+      "id": "gold",
+      "name": "Gold (XAU/USD)",
+      "type": "stooq_quote",
+      "symbol": "xauusd",
+      "format": { "prefix": "$", "decimals": 2, "thousands": true }
+    },
+    {
+      "id": "wti",
+      "name": "WTI (CL.F)",
+      "type": "stooq_quote",
+      "symbol": "cl.f",
+      "format": { "prefix": "$", "decimals": 2, "thousands": true }
+    },
+    {
+      "id": "ng",
+      "name": "NatGas (NG.F)",
+      "type": "stooq_quote",
+      "symbol": "ng.f",
+      "format": { "prefix": "$", "decimals": 3, "thousands": true }
+    },
+    {
+      "id": "silver",
+      "name": "Silver (XAG/USD)",
+      "type": "stooq_quote",
+      "symbol": "xagusd",
+      "format": { "prefix": "$", "decimals": 2, "thousands": true }
+    },
+    {
+      "id": "copper",
+      "name": "Copper (HG.F)",
+      "type": "stooq_quote",
+      "symbol": "hg.f",
+      "format": { "prefix": "$", "decimals": 2, "thousands": true }
+    },
+    {
+      "id": "tsla",
+      "name": "Tesla (TSLA)",
+      "type": "stooq_quote",
+      "symbol": "tsla.us",
+      "format": { "prefix": "$", "decimals": 2, "thousands": true }
+    },
+    {
+      "id": "googl",
+      "name": "Alphabet (GOOGL)",
+      "type": "stooq_quote",
+      "symbol": "googl.us",
+      "format": { "prefix": "$", "decimals": 2, "thousands": true }
+    },
+    {
+      "id": "aapl",
+      "name": "Apple (AAPL)",
+      "type": "stooq_quote",
+      "symbol": "aapl.us",
+      "format": { "prefix": "$", "decimals": 2, "thousands": true }
+    },
+    {
+      "id": "msft",
+      "name": "Microsoft (MSFT)",
+      "type": "stooq_quote",
+      "symbol": "msft.us",
+      "format": { "prefix": "$", "decimals": 2, "thousands": true }
+    },
+    {
+      "id": "nvda",
+      "name": "NVIDIA (NVDA)",
+      "type": "stooq_quote",
+      "symbol": "nvda.us",
+      "format": { "prefix": "$", "decimals": 2, "thousands": true }
+    },
+    {
+      "id": "amzn",
+      "name": "Amazon (AMZN)",
+      "type": "stooq_quote",
+      "symbol": "amzn.us",
+      "format": { "prefix": "$", "decimals": 2, "thousands": true }
+    },
+    {
+      "id": "meta",
+      "name": "Meta (META)",
+      "type": "stooq_quote",
+      "symbol": "meta.us",
+      "format": { "prefix": "$", "decimals": 2, "thousands": true }
+    },
+    {
+      "id": "eur_usd",
+      "name": "EUR/USD",
+      "type": "stooq_quote",
+      "symbol": "eurusd",
+      "format": { "decimals": 5 }
+    },
+    {
+      "id": "usd_jpy",
+      "name": "USD/JPY",
+      "type": "stooq_quote",
+      "symbol": "usdjpy",
+      "format": { "decimals": 3 }
+    },
+    {
+      "id": "doomsday",
+      "name": "Doomsday Clock",
+      "type": "doomsday_clock",
+      "current_url": "https://thebulletin.org/doomsday-clock/current-time/",
+      "previous_url": "https://thebulletin.org/doomsday-clock/2024-statement/",
+      "format": { "suffix": "s", "decimals": 0 }
     }
   ]
 }

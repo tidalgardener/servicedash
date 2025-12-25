@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import csv
 import json
 import re
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from io import StringIO
 from typing import Any
 
 import httpx
@@ -154,6 +156,189 @@ async def fetch_aws_rss(client: httpx.AsyncClient, rss_url: str) -> NormalizedSt
     return NormalizedStatus(status=Status.OPERATIONAL, message=f"{len(titles)} event(s) (all resolved)", latency_ms=latency_ms)
 
 
+async def fetch_coingecko_price(
+    client: httpx.AsyncClient, asset_id: str, vs_currency: str
+) -> NormalizedStatus:
+    asset_id = asset_id.strip()
+    vs_currency = vs_currency.strip().lower()
+    if not asset_id or not vs_currency:
+        return NormalizedStatus(status=Status.UNKNOWN, message="Missing asset_id/vs_currency")
+
+    started = time.perf_counter()
+    url = (
+        "https://api.coingecko.com/api/v3/simple/price"
+        f"?ids={asset_id}&vs_currencies={vs_currency}&include_last_updated_at=true"
+    )
+    data = await _get_json(client, url)
+    latency_ms = int((time.perf_counter() - started) * 1000)
+
+    asset = data.get(asset_id) if isinstance(data, dict) else None
+    if not isinstance(asset, dict) or vs_currency not in asset:
+        return NormalizedStatus(status=Status.UNKNOWN, message="Unexpected CoinGecko response", latency_ms=latency_ms)
+
+    value = float(asset[vs_currency])
+    updated_at = asset.get("last_updated_at")
+    note = "CoinGecko"
+    if isinstance(updated_at, (int, float)):
+        dt = datetime.fromtimestamp(int(updated_at), tz=timezone.utc).astimezone()
+        note = f"CoinGecko @ {dt.strftime('%H:%M:%S')}"
+
+    return NormalizedStatus(status=Status.OPERATIONAL, message=note, latency_ms=latency_ms, value_num=value)
+
+
+async def fetch_fx_rate_frankfurter(
+    client: httpx.AsyncClient, base: str, quote: str
+) -> NormalizedStatus:
+    base = base.strip().upper()
+    quote = quote.strip().upper()
+    if not base or not quote:
+        return NormalizedStatus(status=Status.UNKNOWN, message="Missing base/quote")
+
+    started = time.perf_counter()
+    data = await _get_json(client, f"https://api.frankfurter.app/latest?from={base}&to={quote}")
+    latency_ms = int((time.perf_counter() - started) * 1000)
+
+    rates = data.get("rates") if isinstance(data, dict) else None
+    if not isinstance(rates, dict) or quote not in rates:
+        return NormalizedStatus(status=Status.UNKNOWN, message="Unexpected FX response", latency_ms=latency_ms)
+
+    value = float(rates[quote])
+    date = str(data.get("date") or "").strip()
+    note = f"Frankfurter {date}" if date else "Frankfurter"
+    return NormalizedStatus(status=Status.OPERATIONAL, message=note, latency_ms=latency_ms, value_num=value)
+
+
+async def fetch_stooq_quote(client: httpx.AsyncClient, symbol: str) -> NormalizedStatus:
+    symbol = symbol.strip()
+    if not symbol:
+        return NormalizedStatus(status=Status.UNKNOWN, message="Missing symbol")
+
+    started = time.perf_counter()
+    csv_text = await _get_text(client, f"https://stooq.com/q/l/?s={symbol}&f=sd2t2ohlcv&h&e=csv")
+    latency_ms = int((time.perf_counter() - started) * 1000)
+
+    reader = csv.DictReader(StringIO(csv_text))
+    row = next(reader, None)
+    if not row:
+        return NormalizedStatus(status=Status.UNKNOWN, message="Stooq: empty", latency_ms=latency_ms)
+
+    close = str(row.get("Close") or "").strip()
+    if not close or close.upper() == "N/D":
+        return NormalizedStatus(status=Status.UNKNOWN, message="Stooq: N/D", latency_ms=latency_ms)
+
+    try:
+        value = float(close)
+    except ValueError:
+        return NormalizedStatus(status=Status.UNKNOWN, message="Stooq: parse error", latency_ms=latency_ms)
+
+    date = str(row.get("Date") or "").strip()
+    time_s = str(row.get("Time") or "").strip()
+    note = "Stooq"
+    if date and time_s and date.upper() != "N/D" and time_s.upper() != "N/D":
+        note = f"Stooq {date} {time_s}"
+    return NormalizedStatus(status=Status.OPERATIONAL, message=note, latency_ms=latency_ms, value_num=value)
+
+
+def _parse_doomsday_seconds(html: str) -> int | None:
+    # Common phrasing in the Bulletin pages: "It is 89 seconds to midnight."
+    m = re.search(r"\bit\s+is\s+(?:still\s+)?(\d+)\s*seconds?\s+to\s+midnight\b", html, re.I)
+    if m:
+        return int(m.group(1))
+    m = re.search(r"\b(\d+)\s*seconds?\s+to\s+midnight\b", html, re.I)
+    if m:
+        return int(m.group(1))
+    m = re.search(r"\b(\d+)\s*minutes?\s+to\s+midnight\b", html, re.I)
+    if m:
+        return int(m.group(1)) * 60
+    return None
+
+
+def _parse_doomsday_year(html: str) -> int | None:
+    m = re.search(r"/doomsday-clock/(\d{4})-statement/?", html)
+    if m:
+        return int(m.group(1))
+    m = re.search(r"\b(20\d{2})\s+Doomsday\s+Clock\b", html, re.I)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def _parse_doomsday_published(html: str) -> datetime | None:
+    # WordPress Yoast JSON-LD includes datePublished.
+    m = re.search(r"\"datePublished\"\\s*:\\s*\"([^\"]+)\"", html)
+    if m:
+        return parse_datetime(m.group(1))
+    return None
+
+
+async def fetch_doomsday_clock(
+    client: httpx.AsyncClient, current_url: str, previous_url: str | None
+) -> NormalizedStatus:
+    current_url = current_url.strip()
+    if not current_url:
+        return NormalizedStatus(status=Status.UNKNOWN, message="Missing current_url")
+
+    started = time.perf_counter()
+    current_html = await _get_text(client, current_url)
+
+    current_seconds = _parse_doomsday_seconds(current_html)
+    current_year = _parse_doomsday_year(current_html)
+    current_published = _parse_doomsday_published(current_html)
+
+    prev_seconds: int | None = None
+    prev_year: int | None = None
+    prev_published: datetime | None = None
+
+    if previous_url:
+        try:
+            prev_html = await _get_text(client, previous_url)
+            prev_seconds = _parse_doomsday_seconds(prev_html)
+            prev_year = _parse_doomsday_year(prev_html)
+            prev_published = _parse_doomsday_published(prev_html)
+        except Exception:
+            prev_seconds = None
+
+    latency_ms = int((time.perf_counter() - started) * 1000)
+
+    if current_seconds is None:
+        return NormalizedStatus(status=Status.UNKNOWN, message="Doomsday parse error", latency_ms=latency_ms)
+
+    base = f"{current_seconds}s to midnight"
+    if current_year:
+        base = f"{base} ({current_year})"
+
+    if prev_seconds is None:
+        return NormalizedStatus(
+            status=Status.OPERATIONAL,
+            message=base,
+            latency_ms=latency_ms,
+            value_num=float(current_seconds),
+        )
+
+    delta = int(current_seconds - prev_seconds)
+    direction = "unchanged"
+    if delta < 0:
+        direction = "toward midnight"
+    elif delta > 0:
+        direction = "away from midnight"
+
+    duration_years = 1.0
+    if current_published and prev_published:
+        dt = (current_published - prev_published).total_seconds()
+        if dt > 0:
+            duration_years = dt / (365.25 * 24 * 3600)
+    rate = delta / duration_years
+
+    prev_label = str(prev_year) if prev_year else "prev"
+    msg = f"{base}; Δ {delta:+d}s vs {prev_label} ({direction}); ~{rate:+.2f}s/yr"
+    return NormalizedStatus(
+        status=Status.OPERATIONAL,
+        message=msg,
+        latency_ms=latency_ms,
+        value_num=float(current_seconds),
+    )
+
+
 async def fetch_gcp_incidents(
     client: httpx.AsyncClient, incidents_url: str, product_ids: list[str]
 ) -> NormalizedStatus:
@@ -240,5 +425,25 @@ async def fetch_service(client: httpx.AsyncClient, service: Service) -> Normaliz
             incidents_url=str(cfg.get("incidents_url", "")),
             product_ids=list(cfg.get("product_ids") or []),
         )
+    if t == "coingecko_price":
+        return await fetch_coingecko_price(
+            client,
+            asset_id=str(cfg.get("asset_id", "")),
+            vs_currency=str(cfg.get("vs_currency", "")),
+        )
+    if t == "fx_rate":
+        return await fetch_fx_rate_frankfurter(
+            client,
+            base=str(cfg.get("base", "")),
+            quote=str(cfg.get("quote", "")),
+        )
+    if t == "stooq_quote":
+        return await fetch_stooq_quote(client, symbol=str(cfg.get("symbol", "")))
+    if t == "doomsday_clock":
+        prev = str(cfg.get("previous_url") or "").strip() or None
+        return await fetch_doomsday_clock(
+            client,
+            current_url=str(cfg.get("current_url", "")),
+            previous_url=prev,
+        )
     return NormalizedStatus(status=Status.UNKNOWN, message=f"Unknown service type: {t}")
-
