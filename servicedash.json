@@ -1,0 +1,81 @@
+{
+  "poll_interval_seconds": 300,
+  "history_hours": 24,
+  "retention_hours": 168,
+  "database_path": "data/servicedash.sqlite3",
+  "services": [
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "type": "statuspage",
+      "base_url": "https://status.openai.com"
+    },
+    {
+      "id": "openai_codex",
+      "name": "OpenAI Codex",
+      "type": "statuspage_component",
+      "base_url": "https://status.openai.com",
+      "component_match": ["codex"]
+    },
+    {
+      "id": "gemini",
+      "name": "Gemini (Vertex Gemini API)",
+      "type": "gcp_incidents",
+      "incidents_url": "https://status.cloud.google.com/incidents.json",
+      "product_ids": ["Z0FZJAMvEB4j3NbCJs6B"]
+    },
+    {
+      "id": "aws",
+      "name": "AWS",
+      "type": "aws_rss",
+      "rss_url": "https://status.aws.amazon.com/rss/all.rss"
+    },
+    {
+      "id": "gae",
+      "name": "Google App Engine",
+      "type": "gcp_incidents",
+      "incidents_url": "https://status.cloud.google.com/incidents.json",
+      "product_ids": ["kchyUtnkMHJWaAva8aYc"]
+    },
+    {
+      "id": "helpscout",
+      "name": "HelpScout",
+      "type": "statuspage",
+      "base_url": "https://status.helpscout.com"
+    },
+    {
+      "id": "slack",
+      "name": "Slack",
+      "type": "slack",
+      "current_url": "https://slack-status.com/api/v2.0.0/current",
+      "history_url": "https://slack-status.com/api/v2.0.0/history"
+    },
+    {
+      "id": "anthropic",
+      "name": "Anthropic",
+      "type": "statuspage",
+      "base_url": "https://status.anthropic.com"
+    },
+    {
+      "id": "claude_web",
+      "name": "Claude (claude.ai)",
+      "type": "statuspage_component",
+      "base_url": "https://status.anthropic.com",
+      "component_match": ["claude.ai"]
+    },
+    {
+      "id": "claude_api",
+      "name": "Claude API",
+      "type": "statuspage_component",
+      "base_url": "https://status.anthropic.com",
+      "component_match": ["Claude API"]
+    },
+    {
+      "id": "claude_code",
+      "name": "Claude Code",
+      "type": "statuspage_component",
+      "base_url": "https://status.anthropic.com",
+      "component_match": ["Claude Code"]
+    }
+  ]
+}
