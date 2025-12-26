@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import random
 import re
 import shutil
 import sys
@@ -30,6 +31,12 @@ AMBER = "rgb(255,176,0)"
 DIM_AMBER = "rgb(160,110,0)"
 GREEN = "rgb(0,255,0)"
 RED = "rgb(255,80,80)"
+MATRIX_GREEN = "rgb(80,255,140)"
+DIM_MATRIX = "rgb(0,110,60)"
+
+# Panel is 80 cols wide. With a 1-col left/right padding and a 1-col border on each side,
+# the usable width for single-line content is 76.
+INNER_WIDTH = 76
 
 
 def _status_style(status: str) -> str:
@@ -44,7 +51,13 @@ def _status_style(status: str) -> str:
 
 def _status_chip(status: str) -> Text:
     dot = "●"
-    label = status.upper()[:7]
+    short = {
+        Status.OPERATIONAL.key: "OK",
+        Status.DEGRADED.key: "DEG",
+        Status.OUTAGE.key: "DOWN",
+        Status.UNKNOWN.key: "UNK",
+    }.get(status, status.upper()[:3])
+    label = short
     return Text(f"{dot} {label}", style=_status_style(status))
 
 
@@ -221,6 +234,7 @@ def _range_bar(*, current: float | None, lo: float | None, hi: float | None, wid
 
 @dataclass(frozen=True)
 class ServiceView:
+    order: int
     service_id: str
     name: str
     type: str
@@ -228,84 +242,266 @@ class ServiceView:
     latest: PollRow | None
     history: list[PollRow]
 
+METRIC_TYPES = {
+    "coingecko_price",
+    "fx_rate",
+    "stooq_quote",
+    "doomsday_clock",
+    "metaculus_date",
+    "manifold_year_market",
+}
+DATE_CLOCK_TYPES = {"metaculus_date", "manifold_year_market"}
+MARKET_METRIC_TYPES = {"coingecko_price", "fx_rate", "stooq_quote"}
 
-def _render_table(views: list[ServiceView]) -> Table:
-    table = Table(
-        box=box.SIMPLE_HEAVY,
-        expand=True,
-        show_header=True,
-        header_style=f"bold {AMBER}",
-        border_style=DIM_AMBER,
-        pad_edge=False,
-        row_styles=["", "on rgb(18,10,0)"],
+COL_ITEM = 20
+COL_NOW = 12
+COL_24H = 8
+COL_GAUGE = 12
+COL_TREND = 20
+COL_SEP = "│"
+
+
+@dataclass(frozen=True)
+class DisplayRow:
+    kind: str  # "group" | "service"
+    label: str
+    view: ServiceView | None = None
+
+
+def _group_for(view: ServiceView) -> str:
+    raw = view.cfg.get("group")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+
+    sid = view.service_id
+    if view.type in DATE_CLOCK_TYPES or sid in {"doomsday"}:
+        return "Clocks"
+    if sid in {"openai", "openai_codex", "gemini", "anthropic", "claude_web", "claude_api", "claude_code"}:
+        return "AI / LLMs"
+    if sid in {"aws", "gae", "vercel"}:
+        return "Cloud / Hosting"
+    if sid in {"shopify", "helpscout", "slack"}:
+        return "Ops / SaaS"
+    if sid in {"cloudflare", "github", "netlify"}:
+        return "Internet Core"
+    if sid in {"bitcoin_network", "btc_usd"}:
+        return "Markets / Crypto"
+    if sid in {"cad_usd", "eur_usd", "usd_jpy"}:
+        return "Markets / FX"
+    if sid in {"spx", "ndx"}:
+        return "Markets / Indices"
+    if sid in {"gold", "silver", "copper", "wti", "ng"}:
+        return "Markets / Commodities"
+    if sid in {"tsla", "googl", "aapl", "msft", "nvda", "amzn", "meta"}:
+        return "Markets / Equities"
+    if view.type in MARKET_METRIC_TYPES:
+        return "Markets"
+    return "Other"
+
+
+def _group_order(group: str) -> int:
+    if group == "AI / LLMs":
+        return 10
+    if group == "Cloud / Hosting":
+        return 20
+    if group == "Ops / SaaS":
+        return 30
+    if group == "Internet Core":
+        return 40
+    if group.startswith("Markets / "):
+        sub = group.split("/", 1)[1].strip()
+        sub_order = {
+            "Crypto": 0,
+            "FX": 1,
+            "Indices": 2,
+            "Commodities": 3,
+            "Equities": 4,
+        }.get(sub, 9)
+        return 50 + sub_order
+    if group == "Markets":
+        return 59
+    if group == "Clocks":
+        return 90
+    return 999
+
+
+def _episodes(rows: list[PollRow]) -> int:
+    episodes = 0
+    prev_ok = True
+    for r in rows:
+        ok = r.status == Status.OPERATIONAL.key
+        if not ok and prev_ok:
+            episodes += 1
+        prev_ok = ok
+    return episodes
+
+
+def _fit(s: str, width: int, *, align: str = "left") -> str:
+    s = _truncate(s, width)
+    if align == "right":
+        return s.rjust(width)
+    return s.ljust(width)
+
+
+def _fit_text(text: Text, width: int, *, align: str = "left") -> Text:
+    t = text.copy()
+    t.truncate(width, overflow="ellipsis")
+    pad = width - len(t.plain)
+    if pad <= 0:
+        return t
+    if align == "right":
+        return Text(" " * pad) + t
+    t.append(" " * pad)
+    return t
+
+
+def _matrix_noise(width: int, *, seed: int) -> Text:
+    rng = random.Random(seed)
+    chars = "0123456789abcdef"
+    t = Text()
+    for _ in range(width):
+        if rng.random() < 0.12:
+            t.append(" ", style=DIM_MATRIX)
+            continue
+        ch = rng.choice(chars)
+        style = MATRIX_GREEN if rng.random() < 0.12 else DIM_MATRIX
+        t.append(ch, style=style)
+    return t
+
+
+def _build_display_rows(views: list[ServiceView]) -> list[DisplayRow]:
+    sorted_views = sorted(
+        views,
+        key=lambda v: (
+            _group_order(_group_for(v)),
+            _group_for(v).lower(),
+            v.order,
+            v.name.lower(),
+        ),
     )
-    table.add_column("Item", width=18, no_wrap=True)
-    table.add_column("Now", width=12, justify="right", no_wrap=True)
-    table.add_column("24h", width=8, justify="right", no_wrap=True)
-    table.add_column("Gauge", width=12, no_wrap=True)
-    table.add_column("Trend", width=24, no_wrap=True)
-    table.add_column("Note", ratio=1, no_wrap=True)
+    rows: list[DisplayRow] = []
+    last_group: str | None = None
+    for v in sorted_views:
+        group = _group_for(v)
+        if group != last_group:
+            rows.append(DisplayRow(kind="group", label=group))
+            last_group = group
+        rows.append(DisplayRow(kind="service", label=group, view=v))
+    return rows
 
-    for v in views:
+
+def _render_rows(rows: list[DisplayRow]) -> Group:
+    header = Text.assemble(
+        (f"{_fit('Item', COL_ITEM)}", f"bold {AMBER}"),
+        (COL_SEP, DIM_AMBER),
+        (f"{_fit('Now', COL_NOW, align='right')}", f"bold {AMBER}"),
+        (COL_SEP, DIM_AMBER),
+        (f"{_fit('24h', COL_24H, align='right')}", f"bold {AMBER}"),
+        (COL_SEP, DIM_AMBER),
+        (f"{_fit('Gauge', COL_GAUGE)}", f"bold {AMBER}"),
+        (COL_SEP, DIM_AMBER),
+        (f"{_fit('Trend', COL_TREND)}", f"bold {AMBER}"),
+    )
+    divider = Text("─" * INNER_WIDTH, style=DIM_AMBER)
+
+    out_lines: list[Text] = [header, divider]
+    service_row_i = 0
+    for row in rows:
+        if row.kind == "group":
+            title = f"╞══ {row.label} "
+            fill = "═" * max(0, INNER_WIDTH - len(title))
+            line = Text(_fit(title + fill, INNER_WIDTH), style=f"bold {MATRIX_GREEN}")
+            line.stylize(f"on rgb(0,12,0)")
+            out_lines.append(line)
+            continue
+
+        v = row.view
+        if v is None:
+            continue
         latest = v.latest
-        is_metric = v.type in {"coingecko_price", "fx_rate", "stooq_quote", "doomsday_clock", "metaculus_date", "manifold_year_market"}
+        is_metric = v.type in METRIC_TYPES
 
         if is_metric:
             first, last, pct = _metric_change(v.history)
             lo, hi = _metric_range(v.history)
-            delta_txt = "  —"
-            is_date_clock = v.type in {"metaculus_date", "manifold_year_market"}
+            delta_txt = "—"
+            is_date_clock = v.type in DATE_CLOCK_TYPES
+            direction_val: float | None = None
             if is_date_clock and first is not None and last is not None:
                 delta_days = (last - first) / 86400.0
-                delta_txt = f"{delta_days:+6.1f}d"
-            elif pct is not None:
-                delta_txt = f"{pct:+6.2%}"
-            elif first is not None and last is not None:
-                delta_txt = f"{(last - first):+7.2f}"
-
-            if is_date_clock and first is not None and last is not None:
-                delta_days = (last - first) / 86400.0
+                delta_txt = f"{delta_days:+.1f}d"
+                direction_val = delta_days
                 trend_style = GREEN if delta_days > 0 else RED if delta_days < 0 else AMBER
+            elif pct is not None:
+                delta_txt = f"{pct:+.1%}"
+                direction_val = pct
+                trend_style = GREEN if pct > 0 else RED if pct < 0 else AMBER
+            elif first is not None and last is not None:
+                delta_val = last - first
+                delta_txt = f"{delta_val:+.2f}"
+                direction_val = delta_val
+                trend_style = GREEN if delta_val > 0 else RED if delta_val < 0 else AMBER
             else:
-                trend_style = GREEN if pct is not None and pct > 0 else RED if pct is not None and pct < 0 else AMBER
-            if last is None:
-                now_cell = Text("…", style=DIM_AMBER)
-                gauge = Text(" " * 12, style=DIM_AMBER)
-                trend = Text("·" * 24, style=DIM_AMBER)
-            else:
+                trend_style = AMBER
+
+            arrow = "·"
+            if direction_val is not None:
+                arrow = "▲" if direction_val > 0 else "▼" if direction_val < 0 else "•"
+            delta_disp = delta_txt if delta_txt == "—" else f"{arrow}{delta_txt}"
+
+            now_cell = Text("…", style=DIM_AMBER)
+            gauge = Text(" " * COL_GAUGE, style=DIM_AMBER)
+            trend = Text("·" * COL_TREND, style=DIM_AMBER)
+            if last is not None:
                 now_txt = _format_value(v, float(last))
                 now_cell = Text(now_txt, style=trend_style)
-                if is_date_clock:
-                    gauge = Text(" " * 12, style=DIM_AMBER)
-                else:
-                    gauge = _range_bar(current=float(last), lo=lo, hi=hi, width=12, style=trend_style)
-                trend = _value_spark(_bucket_values(v.history, hours=24, buckets=24), style=trend_style)
+                if not is_date_clock:
+                    gauge = _range_bar(current=float(last), lo=lo, hi=hi, width=COL_GAUGE, style=trend_style)
+                trend = _value_spark(_bucket_values(v.history, hours=24, buckets=COL_TREND), style=trend_style)
 
-            note_raw = latest.message if latest else "No data yet"
-            if v.type not in {"doomsday_clock", "metaculus_date", "manifold_year_market"} and lo is not None and hi is not None:
-                note_raw = f"{note_raw}  lo {lo:.2f} hi {hi:.2f}".strip()
-            note = _truncate(note_raw, 38)
-            table.add_row(Text(_truncate(v.name, 18), style=AMBER), now_cell, Text(delta_txt, style=trend_style), gauge, trend, Text(note, style=DIM_AMBER))
-            continue
+            item = _fit_text(Text(v.name, style=AMBER), COL_ITEM)
+            now_cell = _fit_text(now_cell, COL_NOW, align="right")
+            delta = _fit_text(Text(delta_disp, style=trend_style), COL_24H, align="right")
+            gauge = _fit_text(gauge, COL_GAUGE)
+            trend = _fit_text(trend, COL_TREND)
 
-        now_chip = _status_chip(latest.status) if latest else Text("…", style=DIM_AMBER)
-        uptime = _uptime(v.history)
-        uptime_pct = f"{int(round(uptime * 100)):>3d}%" if uptime is not None else "  —"
-        gauge = _uptime_bar(uptime, width=12)
-        trend = _trend_spark(_bucket_trend(v.history, hours=24, buckets=24))
-        if latest and latest.latency_ms is not None:
-            note_raw = f"{latest.latency_ms}ms {latest.message}"
+            sep = Text(COL_SEP, style=DIM_AMBER)
+            line = item + sep + now_cell + sep + delta + sep + gauge + sep + trend
         else:
-            note_raw = latest.message if latest else "No data yet"
-        note = _truncate(note_raw, 38)
-        table.add_row(Text(_truncate(v.name, 18), style=AMBER), now_chip, uptime_pct, gauge, trend, Text(note, style=DIM_AMBER))
+            status = latest.status if latest else Status.UNKNOWN.key
+            chip = _status_chip(status)
+            if latest and latest.latency_ms is not None:
+                chip.append(f" {latest.latency_ms}ms", style=DIM_AMBER)
+            uptime = _uptime(v.history)
+            pct = int(round(uptime * 100)) if uptime is not None else None
+            eps = _episodes(v.history)
+            eps_txt = str(eps) if eps <= 9 else "9+"
+            uptime_txt = f"{pct:>3d}%E{eps_txt}" if pct is not None else "—"
 
-    return table
+            gauge = _uptime_bar(uptime, width=COL_GAUGE)
+            trend = _trend_spark(_bucket_trend(v.history, hours=24, buckets=COL_TREND))
+
+            item = _fit_text(Text(v.name, style=AMBER), COL_ITEM)
+            now_cell = _fit_text(chip, COL_NOW, align="right")
+            delta = _fit_text(Text(uptime_txt, style=_status_style(status)), COL_24H, align="right")
+            gauge = _fit_text(gauge, COL_GAUGE)
+            trend = _fit_text(trend, COL_TREND)
+
+            sep = Text(COL_SEP, style=DIM_AMBER)
+            line = item + sep + now_cell + sep + delta + sep + gauge + sep + trend
+
+        row_bg = "on rgb(18,10,0)" if (service_row_i % 2 == 1) else ""
+        if row_bg:
+            line.stylize(row_bg)
+        out_lines.append(line)
+        service_row_i += 1
+
+    return Group(*out_lines)
 
 
 def _render_screen(
     *,
-    views: list[ServiceView],
+    rows: list[DisplayRow],
     all_views: list[ServiceView],
     pinned: list[ServiceView],
     last_poll_ts: int | None,
@@ -319,17 +515,80 @@ def _render_screen(
         if last_poll_ts
         else "—"
     )
-    pager = "" if page_count <= 1 else f"  page {page_index + 1}/{page_count} {page_mode}"
-    header = Text.assemble(
-        ("ServiceDash", f"bold {AMBER}"),
-        ("  ", DIM_AMBER),
-        (f"now {now_local}", DIM_AMBER),
-        ("  ", DIM_AMBER),
-        (f"last poll {last_poll}", DIM_AMBER),
-        (pager, DIM_AMBER),
-        ("  ", DIM_AMBER),
-        ("r refresh  n/p page  q quit", DIM_AMBER),
-    )
+    mode = "A" if page_mode == "(auto)" else "M" if page_mode == "(manual)" else ""
+    pager = "" if page_count <= 1 else f" p{page_index + 1}/{page_count}{mode}"
+    header1 = Text(_fit(f"ServiceDash  now {now_local}  poll {last_poll}{pager}", INNER_WIDTH), style=f"bold {AMBER}")
+
+    svc_ok = svc_dg = svc_dn = svc_unk = 0
+    for v in all_views:
+        if bool(v.cfg.get("pin")):
+            continue
+        if v.type in METRIC_TYPES:
+            continue
+        s = v.latest.status if v.latest else Status.UNKNOWN.key
+        if s == Status.OPERATIONAL.key:
+            svc_ok += 1
+        elif s == Status.DEGRADED.key:
+            svc_dg += 1
+        elif s == Status.OUTAGE.key:
+            svc_dn += 1
+        else:
+            svc_unk += 1
+
+    m_up = m_dn = m_flat = m_unk = 0
+    for v in all_views:
+        if bool(v.cfg.get("pin")):
+            continue
+        if v.type not in MARKET_METRIC_TYPES:
+            continue
+        first, last, pct = _metric_change(v.history)
+        if last is None:
+            m_unk += 1
+            continue
+        delta = pct if pct is not None else ((last - first) if (first is not None and last is not None) else None)
+        if delta is None:
+            m_unk += 1
+        elif delta > 0:
+            m_up += 1
+        elif delta < 0:
+            m_dn += 1
+        else:
+            m_flat += 1
+
+    header2 = Text()
+    header2.append("SVC ", style=DIM_AMBER)
+    header2.append(f"OK{svc_ok}", style=GREEN)
+    header2.append(" ", style=DIM_AMBER)
+    header2.append(f"DG{svc_dg}", style=AMBER)
+    header2.append(" ", style=DIM_AMBER)
+    header2.append(f"DN{svc_dn}", style=RED)
+    header2.append(" ", style=DIM_AMBER)
+    header2.append(f"?{svc_unk}", style=DIM_AMBER)
+    header2.append("  ", style=DIM_AMBER)
+    header2.append("MKT ", style=DIM_AMBER)
+    header2.append(f"▲{m_up}", style=GREEN)
+    header2.append(" ", style=DIM_AMBER)
+    header2.append(f"▼{m_dn}", style=RED)
+    header2.append(" ", style=DIM_AMBER)
+    header2.append(f"={m_flat}", style=AMBER)
+    if m_unk:
+        header2.append(" ", style=DIM_AMBER)
+        header2.append(f"?{m_unk}", style=DIM_AMBER)
+    header2.append("  ", style=DIM_AMBER)
+    header2.append("r refresh  n/p page  q quit", style=DIM_AMBER)
+
+    noise_len = max(0, INNER_WIDTH - len(header2.plain))
+    if noise_len:
+        header2 = header2 + _matrix_noise(noise_len, seed=utc_now_ts() + page_index * 101)
+    header2 = _fit_text(header2, INNER_WIDTH)
+
+    border_style = MATRIX_GREEN
+    if svc_dn:
+        border_style = RED
+    elif svc_dg:
+        border_style = AMBER
+    elif svc_unk:
+        border_style = DIM_AMBER
 
     pinned_lines: list[Text] = []
     if pinned:
@@ -340,7 +599,7 @@ def _render_screen(
         now_ts = utc_now_ts()
         for v in pinned_sorted[:4]:
             if not v.latest or v.latest.value_num is None:
-                pinned_lines.append(Text(f"{v.name}: …", style=AMBER))
+                pinned_lines.append(Text(_fit(f"{v.name}: …", INNER_WIDTH), style=AMBER))
                 continue
 
             eta_ts = float(v.latest.value_num)
@@ -361,10 +620,10 @@ def _render_screen(
                 shift_style = GREEN if shift_days > 0 else RED if shift_days < 0 else AMBER
                 shift_txt = f"  ΔETA {shift_days:+.1f}d/24h"
 
-            line = f"{v.name}: {countdown} {remaining_hours:02d}h  ETA {eta_dt.date().isoformat()}{shift_txt}"
-            pinned_lines.append(Text(_truncate(line, 78), style=shift_style))
+            line = f"{v.name}: {countdown}{remaining_hours:02d}h  ETA {eta_dt.date().isoformat()}{shift_txt}"
+            pinned_lines.append(Text(_fit(line, INNER_WIDTH), style=shift_style))
 
-    table = _render_table(views)
+    table = _render_rows(rows)
 
     incidents_lines: list[Text] = []
     worst_first = sorted(
@@ -376,9 +635,14 @@ def _render_screen(
         if not v.latest:
             continue
         if v.latest.status != Status.OPERATIONAL.key:
-            incidents_lines.append(Text(f"- {v.name}: {_truncate(v.latest.message, 62)}", style=_status_style(v.latest.status)))
+            incidents_lines.append(
+                Text(
+                    _fit(f"- {v.name}: {v.latest.message}", INNER_WIDTH),
+                    style=_status_style(v.latest.status),
+                )
+            )
     if not incidents_lines:
-        incidents_lines.append(Text("- All tracked services look operational (per current sources).", style=GREEN))
+        incidents_lines.append(Text(_fit("- All tracked services look operational (per current sources).", INNER_WIDTH), style=GREEN))
 
     dooms_view = next((v for v in all_views if v.type == "doomsday_clock"), None)
     dooms_line: Text | None = None
@@ -387,16 +651,15 @@ def _render_screen(
         delta_m = re.search(r"Δ\\s*([+-]?\\d+)s\\b", msg)
         delta = int(delta_m.group(1)) if delta_m else 0
         style = AMBER if delta == 0 else (GREEN if delta > 0 else RED)
-        dooms_text = f"Doomsday Clock: {_truncate(msg, 74)}"
-        dooms_line = Text(dooms_text, style=style)
+        dooms_line = Text(_fit(f"Doomsday Clock: {msg}", INNER_WIDTH), style=style)
 
     footer_parts: list[Text] = [Text("Incidents / Notes (non-OK):", style=f"bold {AMBER}"), *incidents_lines[:3]]
     if dooms_line is not None:
         footer_parts.append(dooms_line)
     footer = Group(*footer_parts)
 
-    content = Group(header, *pinned_lines, table, footer)
-    return Panel(content, border_style=AMBER, box=box.DOUBLE, padding=(0, 1))
+    content = Group(header1, header2, *pinned_lines, table, footer)
+    return Panel(content, border_style=border_style, box=box.DOUBLE, padding=(0, 1))
 
 
 def _terminal_ok() -> tuple[bool, str]:
@@ -409,11 +672,11 @@ def _page_size(services_count: int, *, pinned_count: int) -> int:
     size = shutil.get_terminal_size(fallback=(80, 25))
     # Rough budget for 80x25:
     # - Outer panel border: 2
-    # - Header line: 1
+    # - Header lines: 2
     # - Footer title + up to 3 lines + doomsday: 5
     # - Pinned lines: pinned_count
     # - Table header + rule: 2
-    overhead = 2 + 1 + pinned_count + 5 + 2
+    overhead = 2 + 2 + pinned_count + 5 + 2
     return max(1, min(services_count, max(1, size.lines - overhead)))
 
 
@@ -457,11 +720,12 @@ async def run_dashboard(*, config_path: Path, screen: bool, once: bool) -> None:
         def build_views() -> list[ServiceView]:
             since_ts = utc_now_ts() - int(timedelta(hours=cfg.history_hours).total_seconds())
             views: list[ServiceView] = []
-            for svc in services:
+            for idx, svc in enumerate(services):
                 latest = latest_for_service(conn, svc.id)
                 history = series_for_service(conn, svc.id, since_ts=since_ts)
                 views.append(
                     ServiceView(
+                        order=idx,
                         service_id=svc.id,
                         name=svc.name,
                         type=svc.type,
@@ -561,9 +825,10 @@ async def run_dashboard(*, config_path: Path, screen: bool, once: bool) -> None:
                     all_views = build_views()
                     pinned = [v for v in all_views if bool(v.cfg.get("pin"))]
                     table_views = [v for v in all_views if not bool(v.cfg.get("pin"))]
+                    display_rows = _build_display_rows(table_views)
 
-                    page_size = _page_size(len(table_views), pinned_count=len(pinned))
-                    page_count = max(1, (len(table_views) + page_size - 1) // page_size)
+                    page_size = _page_size(len(display_rows), pinned_count=len(pinned))
+                    page_count = max(1, (len(display_rows) + page_size - 1) // page_size)
                     page_index = 0
                     page_mode = ""
                     if page_count > 1:
@@ -576,11 +841,11 @@ async def run_dashboard(*, config_path: Path, screen: bool, once: bool) -> None:
                             page_mode = "(manual)"
                     current_page = page_index
                     start = page_index * page_size
-                    views = table_views[start : start + page_size]
+                    page_rows = display_rows[start : start + page_size]
 
                     frame = Align.center(
                         _render_screen(
-                            views=views,
+                            rows=page_rows,
                             all_views=all_views,
                             pinned=pinned,
                             last_poll_ts=last_poll_ts,

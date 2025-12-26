@@ -53,10 +53,11 @@
   - Added Doomsday Clock line at the bottom with direction/velocity vs the previous statement.
   - Added AGI and ASI/Singularity “countdown clocks” pinned at the top (Metaculus + Manifold sources).
   - Smoke-checked: `python -m py_compile servicedash/*.py` and `python -m servicedash run --once --no-screen`.
+  - UI refresh: grouped sections + fixed-width (80-col safe) layout + “Matrix” header noise + extra indicators (latency in-row, episode count, delta arrows).
 - Now:
-  - Tighten layout/legibility for strict 80x25 (optional polish).
+  - Optional: tweak/expand indicators and tighten fit for strict 80x25.
 - Next:
-  - Tighten UI fit/legibility for strict 80x25 (optional polish).
+  - Tighten UI fit/legibility for strict 80x25 after grouping (optional polish).
   - Add export (CSV/JSON) if desired.
 
 ## Open questions (mark as UNCONFIRMED if needed)
