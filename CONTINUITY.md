@@ -56,7 +56,7 @@
   - Smoke-checked: `python -m py_compile servicedash/*.py`, `python -m servicedash poll --once --log`, and `python -m servicedash run --once --no-screen`.
   - UI refresh: grouped sections + fixed-width (80-col safe) layout + “Matrix” header noise + extra indicators (latency in-row, episode count, delta arrows).
 - Now:
-  - Docs/handoff sync; ready for incremental UX polish.
+  - Docs/handoff synced; dashboard ready for day-to-day use.
 - Next:
   - Tighten UI fit/legibility for strict 80x25 after grouping (optional polish).
   - Add export (CSV/JSON) if desired.
@@ -74,6 +74,7 @@
 - Branch: `main`
 - HEAD commit (run): `git rev-parse HEAD`
 - Last UI/indicator commit: `3683917d4ea2c1b09b47f3c4fe4df39852754cdf`
+- Last docs/ledger sync commit: `475b4ea`
 - Files: `servicedash/`, `servicedash/ui.py`, `servicedash/sources.py`, `servicedash.json`, `requirements.txt`, `README.md`, `CONTINUITY.md`
 - Commands:
   - Setup: `python3 -m venv .venv && . .venv/bin/activate && python -m pip install -r requirements.txt`

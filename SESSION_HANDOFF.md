@@ -2,7 +2,7 @@
 
 ## Ledger Snapshot (Goal / Now / Next / Open Questions)
 - Goal: Local terminal dashboard (80 cols; tall ok) with retro amber/green/Matrix vibe that aggregates SaaS status + markets + 24h history (SQLite).
-- Now: App is running end-to-end; UI is grouped and fixed-width; docs are being synced for handoff.
+- Now: App is running end-to-end; UI is grouped and fixed-width; docs are synced for handoff.
 - Next (priority):
   1) Optional: export last 24h to JSON/CSV.
   2) Optional: improve paging so section headers don't split from their first row.
@@ -18,6 +18,7 @@
 
 ## At the moment we stopped…
 - Core code is stable; latest “UI/indicators” commit: `3683917d4ea2c1b09b47f3c4fe4df39852754cdf`.
+- Latest docs/ledger sync commit: `475b4ea`.
 - Ran local checks:
   - `python -m py_compile servicedash/*.py`
   - `python -m servicedash poll --once --log`
