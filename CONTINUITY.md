@@ -18,10 +18,11 @@
 
 ## Key decisions
 - Python 3 (tested with the system Python 3.9 on macOS).
-- UI: `rich` (alt-screen live dashboard; amber/green CRT vibe; targets 80x25).
+- UI: `rich` (alt-screen live dashboard; amber/green CRT vibe with Matrix accents; targets 80x25).
 - Polling: `httpx` over HTTPS against public status endpoints.
 - Refresh cadence: polls on startup, then every `poll_interval_seconds` (default `300`); manual refresh via `r`.
 - Persistence: local SQLite at `data/servicedash.sqlite3` (in-repo, gitignored).
+- Layout: fixed-width 80-col-safe rows with group headers; grouping can be overridden via `servicedash.json` per-service `"group"`.
 - “Gemini” source: Google Cloud status product “Vertex Gemini API” (product id `Z0FZJAMvEB4j3NbCJs6B`).
 - “Claude” source: split into component rows from `status.anthropic.com` (claude.ai / Claude API / Claude Code).
 - Optional headless poller mode: `python -m servicedash poll` for background-ish history collection.
@@ -52,22 +53,28 @@
   - Added Bitcoin network health (blocks age + mempool/fee congestion) via `mempool.space` API.
   - Added Doomsday Clock line at the bottom with direction/velocity vs the previous statement.
   - Added AGI and ASI/Singularity “countdown clocks” pinned at the top (Metaculus + Manifold sources).
-  - Smoke-checked: `python -m py_compile servicedash/*.py` and `python -m servicedash run --once --no-screen`.
+  - Smoke-checked: `python -m py_compile servicedash/*.py`, `python -m servicedash poll --once --log`, and `python -m servicedash run --once --no-screen`.
   - UI refresh: grouped sections + fixed-width (80-col safe) layout + “Matrix” header noise + extra indicators (latency in-row, episode count, delta arrows).
 - Now:
-  - Optional: tweak/expand indicators and tighten fit for strict 80x25.
+  - Docs/handoff sync; ready for incremental UX polish.
 - Next:
   - Tighten UI fit/legibility for strict 80x25 after grouping (optional polish).
   - Add export (CSV/JSON) if desired.
+  - Optional: improve paging so group headers don't split from their first row.
+  - Optional: add more “internet health” providers and market/rates indicators.
 
 ## Open questions (mark as UNCONFIRMED if needed)
 - UNCONFIRMED: Any other specific economic metrics you want (rates/indices/yields) beyond the defaults?
 - UNCONFIRMED: Prefer the AGI/ASI clocks to come from Metaculus only, or is Manifold acceptable as a source for one of them?
 - UNCONFIRMED: What polling interval do you want (default 5 min)?
 - UNCONFIRMED: OK using `mempool.space` as the Bitcoin network health source?
+- UNCONFIRMED: Prefer a specific group order/naming for the dashboard sections?
 
 ## Working set (files/ids/commands)
-- Files: `servicedash/`, `servicedash.json`, `requirements.txt`, `README.md`, `CONTINUITY.md`
+- Branch: `main`
+- HEAD commit (run): `git rev-parse HEAD`
+- Last UI/indicator commit: `3683917d4ea2c1b09b47f3c4fe4df39852754cdf`
+- Files: `servicedash/`, `servicedash/ui.py`, `servicedash/sources.py`, `servicedash.json`, `requirements.txt`, `README.md`, `CONTINUITY.md`
 - Commands:
   - Setup: `python3 -m venv .venv && . .venv/bin/activate && python -m pip install -r requirements.txt`
   - Run: `python -m servicedash run`

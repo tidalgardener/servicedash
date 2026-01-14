@@ -4,7 +4,10 @@
 - Local-only.
 
 ## Build steps (TBD)
-- TBD
+- Local setup:
+  - `python3 -m venv .venv`
+  - `. .venv/bin/activate`
+  - `python -m pip install -r requirements.txt`
 
 ## Deploy steps (TBD)
 - Not applicable.
@@ -13,5 +16,4 @@
 - Not applicable.
 
 ## Operational notes / gotchas
-- TBD
-
+- Recommended: run `python -m servicedash poll --log` in a long-running terminal to keep 24h history filled, then view with `python -m servicedash run`.

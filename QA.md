@@ -11,4 +11,5 @@
 - Polling stores history and prunes/queries the last 24 hours correctly.
 
 ## Known failing tests / flaky areas
-- None (repo just bootstrapped).
+- None known.
+- Flaky area: `stooq.com` sometimes times out or returns empty CSV (quotes may show as `unknown`).

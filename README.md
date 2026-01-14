@@ -11,6 +11,8 @@ python -m pip install -r requirements.txt
 python -m servicedash run
 ```
 
+Terminal should be at least `80x25` (recommended ~`80x80`).
+
 Keys: `r` refresh, `n`/`p` page, `q` quit.
 
 Snapshot mode (renders one frame and exits):
@@ -27,6 +29,7 @@ python -m servicedash poll --log
 - `servicedash.json` controls what services are tracked, polling interval, and the local SQLite DB path.
 - Default DB location: `data/servicedash.sqlite3` (created automatically).
 - Default refresh: `poll_interval_seconds: 300` (5 minutes). Press `r` to force an immediate refresh.
+- UI grouping: services are auto-grouped into sections (AI / LLMs, Cloud / Hosting, Markets, etc.); override per service with `"group": "Your Group Name"`.
 - Defaults include:
   - Status sources: OpenAI/Codex, Gemini, AWS, GAE, HelpScout, Slack, Anthropic/Claude, Shopify, Vercel.
   - Internet-critical: Cloudflare, GitHub, Netlify.
